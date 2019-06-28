@@ -1,11 +1,11 @@
-# 0x-debug
+# 0x-relayer-cat
 
-[![Version](https://img.shields.io/npm/v/0x-debug.svg)](https://npmjs.org/package/0x-debug)
-[![Downloads/week](https://img.shields.io/npm/dw/0x-debug.svg)](https://npmjs.org/package/0x-debug)
-[![License](https://img.shields.io/npm/l/0x-debug.svg)](https://github.com/dekz/0x-debug/blob/master/package.json)
+[![Version](https://img.shields.io/npm/v/0x-relayer-cat.svg)](https://npmjs.org/package/0x-relayer-cat)
+[![Downloads/week](https://img.shields.io/npm/dw/0x-relayer-cat.svg)](https://npmjs.org/package/0x-relayer-cat)
+[![License](https://img.shields.io/npm/l/0x-relayer-cat.svg)](https://github.com/dekz/0x-relayer-cat/blob/master/package.json)
 
 <!-- toc -->
-* [0x-debug](#0x-debug)
+* [0x-relayer-cat](#0x-relayer-cat)
 * [Usage](#usage)
 * [Commands](#commands)
 <!-- tocstop -->
