@@ -18,7 +18,7 @@ $ npm install -g 0x-relayer-cat
 $ 0x-relayer-cat COMMAND
 running command...
 $ 0x-relayer-cat (-v|--version|version)
-0x-relayer-cat/0.0.1 darwin-x64 node-v11.13.0
+0x-relayer-cat/0.0.2 darwin-x64 node-v11.13.0
 $ 0x-relayer-cat --help [COMMAND]
 USAGE
   $ 0x-relayer-cat COMMAND
@@ -63,7 +63,7 @@ EXAMPLE
   $ 0x-relayer-cat cat
 ```
 
-_See code: [src/commands/cat.ts](https://github.com/dekz/0x-relayer-cat/blob/v0.0.1/src/commands/cat.ts)_
+_See code: [src/commands/cat.ts](https://github.com/dekz/0x-relayer-cat/blob/v0.0.2/src/commands/cat.ts)_
 
 ## `0x-relayer-cat help [COMMAND]`
 
