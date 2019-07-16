@@ -1,11 +1,10 @@
-import { Command, flags } from '@oclif/command';
-
 import { HttpClient, ordersChannelFactory, OrdersChannelHandler, SignedOrder } from '@0x/connect';
+import { Command, flags } from '@oclif/command';
 import * as _ from 'lodash';
+import * as Web3Providers from 'web3-providers';
 
 export class Cat extends Command {
     public static description = 'Call the Ethereum transaction';
-    private _toSRAEndpoint!: HttpClient;
 
     public static examples = [`$ 0x-relayer-cat cat`];
 
@@ -41,7 +40,28 @@ export class Cat extends Command {
     };
 
     public static args = [];
-    private ordersReceived(orders: SignedOrder[]): void {
+    private _sraClient!: HttpClient;
+    private _meshClient!: Web3Providers.WebsocketProvider;
+    // tslint:disable-next-line:async-suffix
+    public async run(): Promise<void> {
+        // tslint:disable-next-line:no-shadowed-variable
+        const { args, flags } = this.parse(Cat);
+        const { httpEndpoint, wsEndpoint, assetDataA, assetDataB } = flags;
+        if (flags.toSRA) {
+            this._sraClient = new HttpClient(flags.toSRA);
+        }
+        if (flags.toMesh) {
+            const clientConfig = { fragmentOutgoingMessages: false };
+            this._meshClient = new Web3Providers.WebsocketProvider(flags.toMesh, {
+                clientConfig: clientConfig as any, // HACK: Types are saying this is a string
+            });
+            // const heartbeatSubscriptionId = await this._meshClient.subscribe('mesh_subscribe', 'heartbeat', []);
+            // this._meshClient.on(heartbeatSubscriptionId, console.log);
+        }
+        this._connectAsync(httpEndpoint, wsEndpoint, assetDataA, assetDataB);
+    }
+    private _ordersReceived(orders: SignedOrder[]): void {
+        // tslint:disable-next-line:no-shadowed-variable
         const { flags } = this.parse(Cat);
         const { makerAddress } = flags;
         const filteredOrders = makerAddress
@@ -49,16 +69,18 @@ export class Cat extends Command {
             : orders;
         if (flags.toSRA) {
             for (const order of filteredOrders) {
-                void this._toSRAEndpoint.submitOrderAsync(order);
+                void this._sraClient.submitOrderAsync(order);
             }
+        } else if (flags.toMesh) {
+            const stringifiedSignedOrders = filteredOrders.map(stringifyOrder);
+            void this._meshClient.send('mesh_addOrders', [stringifiedSignedOrders]);
         } else {
             for (const order of filteredOrders) {
                 console.log(JSON.stringify(order));
             }
         }
     }
-
-    private async connect(
+    private async _connectAsync(
         httpEndpoint: string,
         wsEndpoint: string,
         assetDataA?: string,
@@ -80,8 +102,9 @@ export class Cat extends Command {
         const ordersChannelHandler: OrdersChannelHandler = {
             onUpdate: async (_channel, _opts, apiOrders) => {
                 const orders = apiOrders.map(o => o.order);
-                this.ordersReceived(orders);
+                this._ordersReceived(orders);
             },
+            // tslint:disable-next-line:no-empty
             onError: () => {},
             onClose: () => {
                 console.error('Channel closed');
@@ -98,7 +121,7 @@ export class Cat extends Command {
                 quoteAssetData: pair.assetDataB.assetData,
             });
             const orders = _.merge(orderBook.asks.records, orderBook.bids.records).map(o => o.order);
-            this.ordersReceived(orders);
+            this._ordersReceived(orders);
             ordersChannel.subscribe({
                 baseAssetData: pair.assetDataA.assetData,
                 quoteAssetData: pair.assetDataB.assetData,
@@ -106,14 +129,23 @@ export class Cat extends Command {
             });
         }
     }
-
-    // tslint:disable-next-line:async-suffix
-    public async run(): Promise<void> {
-        const { args, flags } = this.parse(Cat);
-        const { httpEndpoint, wsEndpoint, assetDataA, assetDataB } = flags;
-        if (flags.toSRA) {
-            this._toSRAEndpoint = new HttpClient(flags.toSRA);
-        }
-        this.connect(httpEndpoint, wsEndpoint, assetDataA, assetDataB);
-    }
 }
+const stringifyOrder = (signedOrder: SignedOrder): any => {
+    const stringifiedSignedOrder = {
+        signature: signedOrder.signature,
+        senderAddress: signedOrder.senderAddress,
+        makerAddress: signedOrder.makerAddress,
+        takerAddress: signedOrder.takerAddress,
+        makerFee: signedOrder.makerFee.toString(),
+        takerFee: signedOrder.takerFee.toString(),
+        makerAssetAmount: signedOrder.makerAssetAmount.toString(),
+        takerAssetAmount: signedOrder.takerAssetAmount.toString(),
+        makerAssetData: signedOrder.makerAssetData,
+        takerAssetData: signedOrder.takerAssetData,
+        salt: signedOrder.salt.toString(),
+        exchangeAddress: signedOrder.exchangeAddress,
+        feeRecipientAddress: signedOrder.feeRecipientAddress,
+        expirationTimeSeconds: signedOrder.expirationTimeSeconds.toString(),
+    };
+    return stringifiedSignedOrder;
+};

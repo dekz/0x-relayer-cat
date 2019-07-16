@@ -15,7 +15,8 @@
         "cli-table": "^0.3.1",
         "lodash": "^4.17.11",
         "ora": "^3.4.0",
-        "tslib": "^1"
+        "tslib": "^1",
+        "web3-providers": "^1.0.0-beta.55"
     },
     "devDependencies": {
         "@0x/tslint-config": "^3.0.1",
