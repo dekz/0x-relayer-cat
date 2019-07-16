@@ -37,11 +37,16 @@ export class Cat extends Command {
         toMesh: flags.string({
             description: 'Mesh Endpoint to forward to',
         }),
+        pushDelay: flags.integer({
+            description: 'Delay in milliseconds before pushing to mesh (allows for batching)',
+        }),
     };
 
     public static args = [];
     private _sraClient!: HttpClient;
     private _meshClient!: Web3Providers.WebsocketProvider;
+    private _pendingMeshOrders: SignedOrder[] = [];
+    private _meshPushIntervalId?: NodeJS.Timeout;
     // tslint:disable-next-line:async-suffix
     public async run(): Promise<void> {
         // tslint:disable-next-line:no-shadowed-variable
@@ -72,14 +77,31 @@ export class Cat extends Command {
                 void this._sraClient.submitOrderAsync(order);
             }
         } else if (flags.toMesh) {
-            const stringifiedSignedOrders = filteredOrders.map(stringifyOrder);
-            void this._meshClient.send('mesh_addOrders', [stringifiedSignedOrders]);
+            this._pushOrdersToMeshAsync(filteredOrders);
         } else {
             for (const order of filteredOrders) {
                 console.log(JSON.stringify(order));
             }
         }
     }
+    private async _pushOrdersToMeshAsync(orders: SignedOrder[]): Promise<void> {
+        // tslint:disable-next-line:no-shadowed-variable
+        const { flags } = this.parse(Cat);
+        if (flags.pushDelay) {
+            this._pendingMeshOrders = [...this._pendingMeshOrders, ...orders];
+            if (!this._meshPushIntervalId) {
+                this._meshPushIntervalId = setInterval(() => {
+                    const stringifiedSignedOrders = this._pendingMeshOrders.map(stringifyOrder);
+                    this._pendingMeshOrders = [];
+                    void this._meshClient.send('mesh_addOrders', [stringifiedSignedOrders]);
+                }, flags.pushDelay);
+            }
+        } else {
+            const stringifiedSignedOrders = orders.map(stringifyOrder);
+            void this._meshClient.send('mesh_addOrders', [stringifiedSignedOrders]);
+        }
+    }
+
     private async _connectAsync(
         httpEndpoint: string,
         wsEndpoint: string,
