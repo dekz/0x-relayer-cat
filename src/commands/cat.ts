@@ -3,6 +3,34 @@ import { Command, flags } from '@oclif/command';
 import * as _ from 'lodash';
 import * as Web3Providers from 'web3-providers';
 
+const DEFAULT_DELAY = 5000;
+const delay = (ms: number) => {
+    return new Promise(resolve => setTimeout(resolve, ms));
+};
+
+const attempt = async <T>(
+    fn: () => Promise<T>,
+    opts: { interval: number; maxRetries: number } = { interval: DEFAULT_DELAY, maxRetries: 10 },
+) => {
+    let result: T | undefined;
+    let currentAttempt = 0;
+    let error;
+    while (!result && currentAttempt <= opts.maxRetries) {
+        currentAttempt++;
+        try {
+            result = await fn();
+        } catch (err) {
+            console.log(new Date(), attempt, err.message);
+            error = err;
+            await delay(opts.interval);
+        }
+    }
+    if (result) {
+        return result;
+    }
+    throw new Error(error);
+};
+
 export class Cat extends Command {
     public static description = 'Call the Ethereum transaction';
 
@@ -138,10 +166,12 @@ export class Cat extends Command {
             ordersChannelHandler,
         );
         for (const pair of filteredAssetPairs) {
-            const orderBook = await client.getOrderbookAsync({
-                baseAssetData: pair.assetDataA.assetData,
-                quoteAssetData: pair.assetDataB.assetData,
-            });
+            const orderBook = await attempt(async () =>
+                client.getOrderbookAsync({
+                    baseAssetData: pair.assetDataA.assetData,
+                    quoteAssetData: pair.assetDataB.assetData,
+                }),
+            );
             const orders = _.merge(orderBook.asks.records, orderBook.bids.records).map(o => o.order);
             this._ordersReceived(orders);
             ordersChannel.subscribe({
@@ -149,6 +179,7 @@ export class Cat extends Command {
                 quoteAssetData: pair.assetDataB.assetData,
                 limit: 1000,
             });
+            await delay(DEFAULT_DELAY);
         }
     }
 }
