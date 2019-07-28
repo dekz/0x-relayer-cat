@@ -1,6 +1,6 @@
 {
     "name": "0x-relayer-cat",
-    "version": "0.0.5",
+    "version": "0.0.11",
     "author": "Jacob Evans @dekz",
     "bin": {
         "0x-relayer-cat": "./bin/run"
@@ -13,6 +13,8 @@
         "@oclif/config": "^1.12.12",
         "@oclif/plugin-help": "^2",
         "cli-table": "^0.3.1",
+        "debug": "^4.1.1",
+        "dekz-mesh-rpc-client": "^0.0.2",
         "lodash": "^4.17.11",
         "ora": "^3.4.0",
         "tslib": "^1",

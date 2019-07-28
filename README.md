@@ -18,7 +18,7 @@ $ npm install -g 0x-relayer-cat
 $ 0x-relayer-cat COMMAND
 running command...
 $ 0x-relayer-cat (-v|--version|version)
-0x-relayer-cat/0.0.5 darwin-x64 node-v11.13.0
+0x-relayer-cat/0.0.10 darwin-x64 node-v11.13.0
 $ 0x-relayer-cat --help [COMMAND]
 USAGE
   $ 0x-relayer-cat COMMAND
@@ -55,6 +55,9 @@ OPTIONS
 
   --makerAddress=makerAddress      Maker address
 
+  --pullDelay=pullDelay            (required) [default: 1000] Delay in milliseconds between pulling from SRA endpoint
+                                   orderbooks
+
   --pushDelay=pushDelay            Delay in milliseconds before pushing to mesh (allows for batching)
 
   --toMesh=toMesh                  Mesh Endpoint to forward to
@@ -65,7 +68,7 @@ EXAMPLE
   $ 0x-relayer-cat cat
 ```
 
-_See code: [src/commands/cat.ts](https://github.com/dekz/0x-relayer-cat/blob/v0.0.5/src/commands/cat.ts)_
+_See code: [src/commands/cat.ts](https://github.com/dekz/0x-relayer-cat/blob/v0.0.10/src/commands/cat.ts)_
 
 ## `0x-relayer-cat help [COMMAND]`
 

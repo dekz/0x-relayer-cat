@@ -1,28 +1,33 @@
 import { HttpClient, ordersChannelFactory, OrdersChannelHandler, SignedOrder } from '@0x/connect';
+import { APIOrder, AssetPairsItem } from '@0x/types';
 import { Command, flags } from '@oclif/command';
+import { WSClient } from 'dekz-mesh-rpc-client';
 import * as _ from 'lodash';
-import * as Web3Providers from 'web3-providers';
 
-const DEFAULT_DELAY = 5000;
+// tslint:disable-next-line:no-var-requires
+const d = require('debug');
+
+const DEFAULT_PULL_DELAY = 1000;
+const DEFAULT_PULL_RETRIES = 10;
 const delay = (ms: number) => {
     return new Promise(resolve => setTimeout(resolve, ms));
 };
 
 const attempt = async <T>(
     fn: () => Promise<T>,
-    opts: { interval: number; maxRetries: number } = { interval: DEFAULT_DELAY, maxRetries: 10 },
+    opts: { interval: number; maxRetries: number } = { interval: DEFAULT_PULL_DELAY, maxRetries: DEFAULT_PULL_RETRIES },
 ) => {
     let result: T | undefined;
-    let currentAttempt = 0;
+    let currentAttempt = 1;
     let error;
     while (!result && currentAttempt <= opts.maxRetries) {
         currentAttempt++;
         try {
             result = await fn();
         } catch (err) {
-            console.log(new Date(), attempt, err.message);
+            d('attempt')(new Date(), currentAttempt, err.message);
             error = err;
-            await delay(opts.interval);
+            await delay(opts.interval * currentAttempt + opts.interval);
         }
     }
     if (result) {
@@ -68,34 +73,42 @@ export class Cat extends Command {
         pushDelay: flags.integer({
             description: 'Delay in milliseconds before pushing to mesh (allows for batching)',
         }),
+        pullDelay: flags.integer({
+            description: 'Delay in milliseconds between pulling from SRA endpoint orderbooks',
+            default: DEFAULT_PULL_DELAY,
+            required: true,
+        }),
     };
 
     public static args = [];
     private _sraClient!: HttpClient;
-    private _meshClient!: Web3Providers.WebsocketProvider;
+    private _meshClient!: WSClient;
     private _pendingMeshOrders: SignedOrder[] = [];
     private _meshPushIntervalId?: NodeJS.Timeout;
+    private _pullDelay: number = DEFAULT_PULL_DELAY;
+    private _totalOrders: number = 0;
     // tslint:disable-next-line:async-suffix
     public async run(): Promise<void> {
         // tslint:disable-next-line:no-shadowed-variable
         const { args, flags } = this.parse(Cat);
         const { httpEndpoint, wsEndpoint, assetDataA, assetDataB } = flags;
+        d('flags')(flags);
         if (flags.toSRA) {
             this._sraClient = new HttpClient(flags.toSRA);
         }
         if (flags.toMesh) {
-            const clientConfig = { fragmentOutgoingMessages: false };
-            this._meshClient = new Web3Providers.WebsocketProvider(flags.toMesh, {
-                clientConfig: clientConfig as any, // HACK: Types are saying this is a string
-            });
-            // const heartbeatSubscriptionId = await this._meshClient.subscribe('mesh_subscribe', 'heartbeat', []);
-            // this._meshClient.on(heartbeatSubscriptionId, console.log);
+            this._meshClient = new WSClient(flags.toMesh);
         }
+        this._pullDelay = flags.pullDelay;
         this._connectAsync(httpEndpoint, wsEndpoint, assetDataA, assetDataB);
+        setInterval(() => {
+            d('orders')(this._totalOrders);
+        }, 30000);
     }
     private _ordersReceived(orders: SignedOrder[]): void {
         // tslint:disable-next-line:no-shadowed-variable
         const { flags } = this.parse(Cat);
+        this._totalOrders += orders.length;
         const { makerAddress } = flags;
         const filteredOrders = makerAddress
             ? orders.filter(o => o.makerAddress === makerAddress.toLowerCase())
@@ -105,7 +118,7 @@ export class Cat extends Command {
                 void this._sraClient.submitOrderAsync(order);
             }
         } else if (flags.toMesh) {
-            this._pushOrdersToMeshAsync(filteredOrders);
+            void this._pushOrdersToMeshAsync(filteredOrders);
         } else {
             for (const order of filteredOrders) {
                 console.log(JSON.stringify(order));
@@ -118,18 +131,85 @@ export class Cat extends Command {
         if (flags.pushDelay) {
             this._pendingMeshOrders = [...this._pendingMeshOrders, ...orders];
             if (!this._meshPushIntervalId) {
-                this._meshPushIntervalId = setInterval(() => {
-                    const stringifiedSignedOrders = this._pendingMeshOrders.map(stringifyOrder);
-                    this._pendingMeshOrders = [];
-                    void this._meshClient.send('mesh_addOrders', [stringifiedSignedOrders]);
+                this._meshPushIntervalId = setInterval(async () => {
+                    if (this._pendingMeshOrders.length > 0) {
+                        const localOrders = [...this._pendingMeshOrders];
+                        this._pendingMeshOrders = [];
+                        const response = await attempt(() => this._meshClient.addOrdersAsync(localOrders));
+                        d('mesh')(
+                            `MESH response: ${response.accepted.length} accepted ${response.rejected.length} rejected ${
+                                localOrders.length
+                            } total`,
+                        );
+                        d('mesh')(
+                            _(response.rejected)
+                                .groupBy('status.code')
+                                .map((a, b) => ({ [b]: a.length }))
+                                .value(),
+                        );
+                    }
                 }, flags.pushDelay);
             }
         } else {
-            const stringifiedSignedOrders = orders.map(stringifyOrder);
-            void this._meshClient.send('mesh_addOrders', [stringifiedSignedOrders]);
+            d('mesh')(`MESH push: ${orders.length} orders`);
+            const response = await attempt(() => this._meshClient.addOrdersAsync(orders));
+            d('mesh')(`MESH response: ${response.accepted.length} ${response.rejected.length} rejected`);
         }
     }
 
+    private async _connectAndSubscribeAsync(
+        client: HttpClient,
+        wsEndpoint: string,
+        assetPairs: AssetPairsItem[],
+    ): Promise<void> {
+        const ordersChannelHandler: OrdersChannelHandler = {
+            onUpdate: async (_channel, _opts, apiOrders) => {
+                const orders = apiOrders.map(o => o.order);
+                this._ordersReceived(orders);
+            },
+            onError: (_channel, err) => {
+                d('ws')(`WS err: ${err}`);
+            },
+            onClose: async () => {
+                d('ws')('Channel closed');
+                await delay(30000);
+                await this._connectAndSubscribeAsync(client, wsEndpoint, assetPairs);
+            },
+        };
+        const ordersChannel = await ordersChannelFactory.createWebSocketOrdersChannelAsync(
+            wsEndpoint,
+            ordersChannelHandler,
+        );
+        let count = 0;
+        // 5 concurrent requests
+        const chunks = _.chunk(assetPairs, 5);
+        for (const chunk of chunks) {
+            _.forEach(chunk, async pair => {
+                const orderBook = await attempt(
+                    async () =>
+                        client.getOrderbookAsync({
+                            baseAssetData: pair.assetDataA.assetData,
+                            quoteAssetData: pair.assetDataB.assetData,
+                        }),
+                    { interval: this._pullDelay, maxRetries: DEFAULT_PULL_RETRIES },
+                );
+                count++;
+                const orders = _.merge(orderBook.asks.records, orderBook.bids.records).map(o => o.order);
+                d('sra')(
+                    `Orderbook added (${count}/${assetPairs.length}): base ${pair.assetDataA.assetData} quote ${
+                        pair.assetDataB.assetData
+                    } ${orders.length}`,
+                );
+                this._ordersReceived(orders);
+                ordersChannel.subscribe({
+                    baseAssetData: pair.assetDataA.assetData,
+                    quoteAssetData: pair.assetDataB.assetData,
+                    limit: 200,
+                });
+            });
+            await delay(this._pullDelay);
+        }
+    }
     private async _connectAsync(
         httpEndpoint: string,
         wsEndpoint: string,
@@ -137,7 +217,8 @@ export class Cat extends Command {
         assetDataB?: string,
     ): Promise<void> {
         const client = new HttpClient(httpEndpoint as any);
-        const allAssetPairs = await client.getAssetPairsAsync({ perPage: 500 });
+        const allAssetPairs = await attempt(() => client.getAssetPairsAsync({ perPage: 500 }));
+        d('sra')(`Orderbook count: ${allAssetPairs.records.length}`);
         const filteredAssetPairs = allAssetPairs.records.filter(pair => {
             if (assetDataA && assetDataB) {
                 return (
@@ -149,56 +230,10 @@ export class Cat extends Command {
             }
             return true;
         });
-        const ordersChannelHandler: OrdersChannelHandler = {
-            onUpdate: async (_channel, _opts, apiOrders) => {
-                const orders = apiOrders.map(o => o.order);
-                this._ordersReceived(orders);
-            },
-            // tslint:disable-next-line:no-empty
-            onError: () => {},
-            onClose: () => {
-                console.error('Channel closed');
-                process.exit(1);
-            },
-        };
-        const ordersChannel = await ordersChannelFactory.createWebSocketOrdersChannelAsync(
-            wsEndpoint as any,
-            ordersChannelHandler,
-        );
-        for (const pair of filteredAssetPairs) {
-            const orderBook = await attempt(async () =>
-                client.getOrderbookAsync({
-                    baseAssetData: pair.assetDataA.assetData,
-                    quoteAssetData: pair.assetDataB.assetData,
-                }),
-            );
-            const orders = _.merge(orderBook.asks.records, orderBook.bids.records).map(o => o.order);
-            this._ordersReceived(orders);
-            ordersChannel.subscribe({
-                baseAssetData: pair.assetDataA.assetData,
-                quoteAssetData: pair.assetDataB.assetData,
-                limit: 1000,
-            });
-            await delay(DEFAULT_DELAY);
+        // MAX 200 websocket connections
+        const chunks = _.chunk(filteredAssetPairs, 200);
+        for (const chunk of chunks) {
+            await this._connectAndSubscribeAsync(client, wsEndpoint, chunk);
         }
     }
 }
-const stringifyOrder = (signedOrder: SignedOrder): any => {
-    const stringifiedSignedOrder = {
-        signature: signedOrder.signature,
-        senderAddress: signedOrder.senderAddress,
-        makerAddress: signedOrder.makerAddress,
-        takerAddress: signedOrder.takerAddress,
-        makerFee: signedOrder.makerFee.toString(),
-        takerFee: signedOrder.takerFee.toString(),
-        makerAssetAmount: signedOrder.makerAssetAmount.toString(),
-        takerAssetAmount: signedOrder.takerAssetAmount.toString(),
-        makerAssetData: signedOrder.makerAssetData,
-        takerAssetData: signedOrder.takerAssetData,
-        salt: signedOrder.salt.toString(),
-        exchangeAddress: signedOrder.exchangeAddress,
-        feeRecipientAddress: signedOrder.feeRecipientAddress,
-        expirationTimeSeconds: signedOrder.expirationTimeSeconds.toString(),
-    };
-    return stringifiedSignedOrder;
-};
