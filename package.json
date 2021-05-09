@@ -15,7 +15,7 @@
         "cli-table": "^0.3.1",
         "debug": "^4.1.1",
         "@0x/mesh-rpc-client": "^7.2.1-beta-0xv3",
-        "lodash": "^4.17.11",
+        "lodash": "^4.17.21",
         "ora": "^3.4.0",
         "tslib": "^1",
         "web3-providers": "^1.0.0-beta.55"
